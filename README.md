@@ -19,3 +19,4 @@ Citation:
   address = {Cham}
 }
 ```
+The citation information will be updated once the proceedings for GRAIL MICCAI are finalized.
