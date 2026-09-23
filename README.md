@@ -68,7 +68,7 @@ coogar \
 
 # Updates
 
-We are actively working to make this software more general and user-friendly.  All updates to this repository will be posted and time stamped here. 
+We are actively working to make this software more general and user-friendly. Please reach out with any issues you encounter or advancements you would like to see. All updates to this repository will be posted and time stamped here. 
 
 + 09.23.2026: COOGAR version 1.0.0: 3D Phase Unwrapping Method
 
