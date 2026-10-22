@@ -141,7 +141,7 @@ def get_version_from_git_archive(version_info):
         return Version("unknown", dev=None, labels=["g{}".format(git_hash)])
 
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 # The following section defines a 'get_cmdclass' function

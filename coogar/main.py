@@ -13,7 +13,10 @@ from .coogar import get_capacities
 from .coogar import get_mincut
 from .coogar import save_progress
 
-def compute_en(u, g, mask, p):
+from .coogar_masked import get_capacities_mask
+from .coogar_masked import get_mincut_mask
+
+def compute_en_mask(u, g, mask, p):
     val_x = mask[:-1, :, :] & mask[1:, :, :]
     val_x = val_x.to(u.device)
     val_y = mask[:, :-1, :] & mask[:, 1:, :]
@@ -79,6 +82,34 @@ def compute_en(u, g, mask, p):
     en = en_fx + en_bx + en_fy + en_by + en_fz + en_bz
     
     return en
+
+
+def compute_en(u, g, p):
+    res_fx = (u[1:, :, :] - u[:-1, :, :]) - (g[1:, :, :] - g[:-1, :, :]) 
+    res_bx = (u[:-1, :, :] - u[1:, :, :]) - (g[:-1, :, :] - g[1:, :, :])
+    
+    res_fy = (u[:, 1:, :] - u[:, :-1, :]) - (g[:, 1:, :] - g[:, :-1, :])     
+    res_by = (u[:, :-1, :] - u[:, 1:, :]) - (g[:, :-1, :] - g[:, 1:, :])
+    
+    res_fz = (u[:, :, 1:] - u[:, :, :-1]) - (g[:, :, 1:] - g[:, :, :-1])
+    res_bz = (u[:, :, :-1] - u[:, :, 1:]) - (g[:, :, :-1] - g[:, :, 1:])
+    
+    res_fx = res_fx.detach().cpu().numpy()
+    en_fx = np.sum(np.abs(res_fx)**p)
+    res_bx = res_bx.detach().cpu().numpy()
+    en_bx = np.sum(np.abs(res_bx)**p)
+    res_fy = res_fy.detach().cpu().numpy()
+    en_fy = np.sum(np.abs(res_fy)**p)
+    res_by = res_by.detach().cpu().numpy()
+    en_by = np.sum(np.abs(res_by)**p)
+    res_fz = res_fz.detach().cpu().numpy()
+    en_fz = np.sum(np.abs(res_fz)**p)
+    res_bz = res_bz.detach().cpu().numpy()
+    en_bz = np.sum(np.abs(res_bz)**p)
+    
+    en = en_fx + en_bx + en_fy + en_by + en_fz + en_bz
+    
+    return en
     
 
 def main(args=None):
@@ -115,26 +146,28 @@ def main(args=None):
     p = int(parsed.p)
     
     Nx, Ny, Nz = g.shape
+    u_save = g # save image in original size
+    device = torch.device(f'cuda:{parsed.gpu_id}' if torch.cuda.is_available() else 'cpu')
     
     if parsed.mask != None:
         mask_nib = nib.load(parsed.mask)
         mask_org = mask_nib.get_fdata()
+        mask_org = torch.from_numpy(mask_org).to(torch.bool)
+        masked = True
+        
+        # crop g around mask to save computational cost
+        coords = torch.nonzero(mask_org)
+        min_idx = coords.min(dim=0).values
+        max_idx = coords.max(dim=0).values
+        g_crop = g[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2]
+        mask = mask_org[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2]
+        mask = mask.to(device)
+        
+        # update shape sizes
+        Nx, Ny, Nz = g_crop.shape
     else:
-        mask_org = np.ones((Nx, Ny, Nz), dtype=bool)
-    mask_org = torch.from_numpy(mask_org).to(torch.bool)
-    
-    g = g * mask_org
-    u_save = g # save image in original size
-    
-    # crop g around mask to save computational cost
-    coords = torch.nonzero(mask_org)
-    min_idx = coords.min(dim=0).values
-    max_idx = coords.max(dim=0).values
-    g_crop = g[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2]
-    mask = mask_org[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2]
-    
-    # update shape sizes
-    Nx, Ny, Nz = g_crop.shape
+        masked = False
+        g_crop = g
     
     pd = parsed.padding
     
@@ -147,8 +180,6 @@ def main(args=None):
         g_crop = g_padded.squeeze(0).squeeze(0)
         
     u = g_crop
-        
-    device = torch.device(f'cuda:{parsed.gpu_id}' if torch.cuda.is_available() else 'cpu')
     
     jumpSchedule = 2 * np.pi * (2 * (np.arange(1, parsed.outerIter + 1) % 2) - 1)
     jumpSchedule = torch.from_numpy(jumpSchedule)
@@ -165,38 +196,53 @@ def main(args=None):
     delta = delta.to(device)
     
     # modify parameters for mincut algorithm
-    params = {'maxIter': 7500,
+    params = {'maxIter': 5000,
                 'tol': 0.001,
                 'Nx': Nx,
                 'Ny': Ny,
                 'Nz': Nz,
                 'delta': delta,
                 'savecost': 1}
-
     
     for i in range(parsed.outerIter):
         print(f"Determining cut {i+1}")
         u = u.to(device)
         g_crop = g_crop.to(device)
-        mask = mask.to(device)
         
         alpha = jumpSchedule[i].to(device)
         
-        graph = get_capacities(u, g_crop, mask, delta, alpha, p, device)       
-        [cut, J] = get_mincut(graph, mask, params)
+        if masked:
+            graph = get_capacities_mask(u, g_crop, mask, delta, alpha, p, device)       
+            [cut, J] = get_mincut_mask(graph, mask, params)
+        else:
+            graph = get_capacities(u, g_crop, delta, alpha, p, device)       
+            [cut, J] = get_mincut(graph, params)
         
         temp = u
         u = u + alpha*cut
         
         if pd > 0:
-            u_save[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2] = u[pd:-pd, pd:-pd, pd:-pd]
+            if masked:
+                u_save[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2] = u[pd:-pd, pd:-pd, pd:-pd]
+                u_save = u_save * mask_org
+            else: 
+                u_save = u[pd:-pd, pd:-pd, pd:-pd]
         else:
-            u_save[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2] = u
-        u_save = u_save * mask_org
+            if masked:
+                u_save[min_idx[0] - 1 :max_idx[0] + 2, min_idx[1] - 1:max_idx[1] + 2, min_idx[2] - 1:max_idx[2] + 2] = u
+                u_save = u_save * mask_org
+            else:
+                u_save = u
         
         # compute energy after cut (goal: minimize)
-        en = compute_en(u, g_crop, mask, p)  
-        print(en)
+        if masked:
+            en = compute_en_mask(u, g_crop, mask, p)  
+        else:
+            en = compute_en(u, g_crop, p)
+        print(f"Energy: {en}")
+        if en in track_energy:
+            print("Phase unwrapping converged.")
+            break
         track_energy.append(en)
         
         save_progress(temp, u_save, cut, parsed.tmp_dir, i, J, img_name, img_affine)

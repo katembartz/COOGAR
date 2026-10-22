@@ -14,54 +14,22 @@ def cost2(u, v, gamma, p, device):
     return (gamma * (u - v)**p).to(device)
 
 # linear operator D implemented as a function
-def D(f, mask):
+def D(f):
     Nx, Ny, Nz = f.shape
     out = torch.zeros(Nx, Ny, Nz, 6, dtype=f.dtype, device=f.device)
-    
-    # if mask is not included, the graph is built everywhere
-    val_x = mask[:-1, :, :] & mask[1:, :, :]
-    val_x = val_x.to(f.device)
-    val_y = mask[:, :-1, :] & mask[:, 1:, :]
-    val_y = val_y.to(f.device)
-    val_z = mask[:, :, :-1] & mask[:, :, 1:]
-    val_z = val_z.to(f.device)
 
-    out[:-1, :, :, 0] = torch.where( # +x : f[i]-f[i+1]
-        val_x,
-        f[:-1, :, :] - f[1:, :, :],
-        torch.zeros_like(f[:-1, :, :])
-    ) 
-    out[:, :-1, :, 1] = torch.where( # +y 
-        val_y,
-        f[:, :-1, :] - f[:, 1:, :],
-        torch.zeros_like(f[:, :-1, :])
-    ) 
-    out[:, :, :-1, 2] = torch.where( # +z
-        val_z,
-        f[:, :, :-1] - f[:, :, 1:],
-        torch.zeros_like(f[:, :, :-1])
-    )
-    
-    out[1:, :, :, 3] = torch.where( # +x : f[i]-f[i-1]
-        val_x,
-        f[1:, :, :] - f[:-1, :, :],
-        torch.zeros_like(f[1:, :, :])
-    ) 
-    out[:, 1:, :, 4] = torch.where( # +y
-        val_y,
-        f[:, 1:, :] - f[:, :-1, :],
-        torch.zeros_like(f[:, 1:, :])
-    )
-    out[:, :, 1:, 5] = torch.where( # +z
-        val_z,
-        f[:, :, 1:] - f[:, :, :-1],
-        torch.zeros_like(f[:, :, 1:])
-    )
+    out[:-1, :, :, 0] = f[:-1, :, :] - f[1:, :, :] # +x : f[i]-f[i+1]
+    out[:, :-1, :, 1] = f[:, :-1, :] - f[:, 1:, :] # +y
+    out[:, :, :-1, 2] = f[:, :, :-1] - f[:, :, 1:] # +z
+
+    out[1:, :, :, 3] = f[1:, :, :] - f[:-1, :, :] # -x : f[i]-f[i-1]
+    out[:, 1:, :, 4] = f[:, 1:, :] - f[:, :-1, :] # -y
+    out[:, :, 1:, 5] = f[:, :, 1:] - f[:, :, :-1] # -z
 
     return out
 
 # linear operator D_T implemented as a function
-def D_T(f, mask):
+def D_T(f):
     Nx, Ny, Nz, Nb = f.shape
 
     out = torch.zeros(
@@ -70,117 +38,29 @@ def D_T(f, mask):
         device=f.device
     )
 
-    val_x = (mask[:-1, :, :] & mask[1:, :, :]).to(f.device)
-    val_y = (mask[:, :-1, :] & mask[:, 1:, :]).to(f.device)
-    val_z = (mask[:, :, :-1] & mask[:, :, 1:]).to(f.device)
+    out[1:, :, :, 0] = f[1:, :, :, 0] - f[:-1, :, :, 0]
+    out[0, :, :, 0] += f[0, :, :, 0]
+    out[-1, :, :, 0] -= f[-1, :, :, 0]
 
-    out[1:, :, :, 0] = torch.where(
-        val_x,
-        f[1:, :, :, 0] - f[:-1, :, :, 0],
-        torch.zeros_like(f[1:, :, :, 0])
-    )
+    out[:, 1:, :, 1] = f[:, 1:, :, 1] - f[:, :-1, :, 1]
+    out[:, 0, :, 1] += f[:, 0, :, 1]
+    out[:, -1, :, 1] -= f[:, -1, :, 1]
+    
+    out[:, :, 1:, 2] = f[:, :, 1:, 2] - f[:, :, :-1, 2]
+    out[:, :, 0, 2] += f[:, :, 0, 2]
+    out[:, :, -1, 2] -= f[:, :, -1, 2]
 
-    out[0, :, :, 0] += torch.where(
-        mask[0, :, :],
-        f[0, :, :, 0],
-        torch.zeros_like(f[0, :, :, 0])
-    )
+    out[:-1, :, :, 3] = f[:-1, :, :, 3] - f[1:, :, :, 3]
+    out[-1, :, :, 3] += f[-1, :, :, 3]
+    out[0, :, :, 3] -= f[0, :, :, 3]
 
-    out[-1, :, :, 0] -= torch.where(
-        mask[-1, :, :],
-        f[-1, :, :, 0],
-        torch.zeros_like(f[-1, :, :, 0])
-    )
+    out[:, :-1, :, 4] = f[:, :-1, :, 4] - f[:, 1:, :, 4]
+    out[:, -1, :, 4] += f[:, -1, :, 4]
+    out[:, 0, :, 4] -= f[:, 0, :, 4]
 
-    out[:, 1:, :, 1] = torch.where(
-        val_y,
-        f[:, 1:, :, 1] - f[:, :-1, :, 1],
-        torch.zeros_like(f[:, 1:, :, 1])
-    )
-
-    out[:, 0, :, 1] += torch.where(
-        mask[:, 0, :],
-        f[:, 0, :, 1],
-        torch.zeros_like(f[:, 0, :, 1])
-    )
-
-    out[:, -1, :, 1] -= torch.where(
-        mask[:, -1, :],
-        f[:, -1, :, 1],
-        torch.zeros_like(f[:, -1, :, 1])
-    )
-
-    out[:, :, 1:, 2] = torch.where(
-        val_z,
-        f[:, :, 1:, 2] - f[:, :, :-1, 2],
-        torch.zeros_like(f[:, :, 1:, 2])
-    )
-
-    out[:, :, 0, 2] += torch.where(
-        mask[:, :, 0],
-        f[:, :, 0, 2],
-        torch.zeros_like(f[:, :, 0, 2])
-    )
-
-    out[:, :, -1, 2] -= torch.where(
-        mask[:, :, -1],
-        f[:, :, -1, 2],
-        torch.zeros_like(f[:, :, -1, 2])
-    )
-
-    out[:-1, :, :, 3] = torch.where(
-        val_x,
-        f[:-1, :, :, 3] - f[1:, :, :, 3],
-        torch.zeros_like(f[:-1, :, :, 3])
-    )
-
-    out[-1, :, :, 3] += torch.where(
-        mask[-1, :, :],
-        f[-1, :, :, 3],
-        torch.zeros_like(f[-1, :, :, 3])
-    )
-
-    out[0, :, :, 3] -= torch.where(
-        mask[0, :, :],
-        f[0, :, :, 3],
-        torch.zeros_like(f[0, :, :, 3])
-    )
-
-    out[:, :-1, :, 4] = torch.where(
-        val_y,
-        f[:, :-1, :, 4] - f[:, 1:, :, 4],
-        torch.zeros_like(f[:, :-1, :, 4])
-    )
-
-    out[:, -1, :, 4] += torch.where(
-        mask[:, -1, :],
-        f[:, -1, :, 4],
-        torch.zeros_like(f[:, -1, :, 4])
-    )
-
-    out[:, 0, :, 4] -= torch.where(
-        mask[:, 0, :],
-        f[:, 0, :, 4],
-        torch.zeros_like(f[:, 0, :, 4])
-    )
-
-    out[:, :, :-1, 5] = torch.where(
-        val_z,
-        f[:, :, :-1, 5] - f[:, :, 1:, 5],
-        torch.zeros_like(f[:, :, :-1, 5])
-    )
-
-    out[:, :, -1, 5] += torch.where(
-        mask[:, :, -1],
-        f[:, :, -1, 5],
-        torch.zeros_like(f[:, :, -1, 5])
-    )
-
-    out[:, :, 0, 5] -= torch.where(
-        mask[:, :, 0],
-        f[:, :, 0, 5],
-        torch.zeros_like(f[:, :, 0, 5])
-    )
+    out[:, :, :-1, 5] = f[:, :, :-1, 5] - f[:, :, 1:, 5]
+    out[:, :, -1, 5] += f[:, :, -1, 5]
+    out[:, :, 0, 5] -= f[:, :, 0, 5]
 
     return out
 
@@ -192,7 +72,7 @@ def D_T(f, mask):
            = prox(y - τ * ΓD[(1/2)*z + w)] by factoring out ΓD
            = prox(y - τ * ΓDγ) where γ = (1/2)*z + w
 """
-def get_mincut(graph, mask, params):
+def get_mincut(graph, params):
     # get graph components for cut by continuous optimization
     w = graph['w']
     Γ = graph['Γ']
@@ -221,19 +101,19 @@ def get_mincut(graph, mask, params):
     # dual gradient descent update
     pbar = tqdm(range(maxIter), total=maxIter)
     for it in pbar:
-        z = D_T(Γ * y, mask).sum(-1)   
+        z = D_T(Γ * y).sum(-1)   
         γ = 0.5 * z + w
-        y = y - τ * (Γ * D(γ, mask))
+        y = y - τ * (Γ * D(γ))
 
         # proximal mapping
         y = torch.clamp(y, min=-1.0, max=1.0)
         
         # get and save costs (with new y -- need update)
-        z = D_T(Γ * y, mask).sum(-1)
+        z = D_T(Γ * y).sum(-1)
         γ = 0.5 * z + w
 
         ϕ = -γ        
-        ϕ_cost = Γ * D(ϕ, mask) # Note: Γ = Γ^T
+        ϕ_cost = Γ * D(ϕ) # Note: Γ = Γ^T
 
         Jp = (ϕ + w).pow(2).sum() + ϕ_cost.abs().sum()
         Jd = -((z * w).sum() + 0.25 * z.pow(2).sum())
@@ -253,19 +133,11 @@ def get_mincut(graph, mask, params):
     cut = ϕ >= 0 
     return cut, J
 
-def get_capacities(u, g, mask, delta, alpha, p, device):
+def get_capacities(u, g, delta, alpha, p, device):
     Nx, Ny, Nz = u.shape
     Nb = len(delta)
     w = torch.zeros((Nx, Ny, Nz), dtype=torch.float64, device=device)
     Γ = torch.zeros((Nx, Ny, Nz, Nb), dtype=torch.float64, device=device)
-    
-    # if mask is not included, the graph is built everywhere
-    val_x = mask[:-1, :, :] & mask[1:, :, :]
-    val_x = val_x.to(device)
-    val_y = mask[:, :-1, :] & mask[:, 1:, :]
-    val_y = val_y.to(device)
-    val_z = mask[:, :, :-1] & mask[:, :, 1:]
-    val_z = val_z.to(device)
     
     # add data edges
     # ==============
@@ -276,9 +148,7 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     
     # add interaction edges
     # =====================
-    gamma_x = val_x * torch.ones((Nx-1, Ny, Nz), device=device)
-    gamma_y = val_y * torch.ones((Nx, Ny-1, Nz), device=device)
-    gamma_z = val_z * torch.ones((Nx, Ny, Nz-1), device=device)
+    gamma = 1 / (delta[:, 0]**2 + delta[:, 1]**2 + delta[:, 2]**2)
     
     # forward x
     # ---------
@@ -287,10 +157,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[1:, :, :]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_x, p, device)
-    V01 = cost2(p_old, q_new, gamma_x, p, device)
-    V10 = cost2(p_new, q_old, gamma_x, p, device)
-    V11 = cost2(p_new, q_new, gamma_x, p, device)
+    V00 = cost2(p_old, q_old, gamma[0], p, device)
+    V01 = cost2(p_old, q_new, gamma[0], p, device)
+    V10 = cost2(p_new, q_old, gamma[0], p, device)
+    V11 = cost2(p_new, q_new, gamma[0], p, device)
     
     w[:Nx-1, :, :] = w[:Nx-1, :, :] + (V10-V00)
     w[1:, :, :] = w[1:, :, :] + (V11-V10)
@@ -303,10 +173,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[:, 1:, :]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_y, p, device)
-    V01 = cost2(p_old, q_new, gamma_y, p, device)
-    V10 = cost2(p_new, q_old, gamma_y, p, device)
-    V11 = cost2(p_new, q_new, gamma_y, p, device)
+    V00 = cost2(p_old, q_old, gamma[1], p, device)
+    V01 = cost2(p_old, q_new, gamma[1], p, device)
+    V10 = cost2(p_new, q_old, gamma[1], p, device)
+    V11 = cost2(p_new, q_new, gamma[1], p, device)
     
     w[:, :Ny-1, :] = w[:, :Ny-1, :] + (V10-V00)
     w[:, 1:, :] = w[:, 1:, :] + (V11-V10)
@@ -319,10 +189,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[:, :, 1:]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_z, p, device)
-    V01 = cost2(p_old, q_new, gamma_z, p, device)
-    V10 = cost2(p_new, q_old, gamma_z, p, device)
-    V11 = cost2(p_new, q_new, gamma_z, p, device)
+    V00 = cost2(p_old, q_old, gamma[2], p, device)
+    V01 = cost2(p_old, q_new, gamma[2], p, device)
+    V10 = cost2(p_new, q_old, gamma[2], p, device)
+    V11 = cost2(p_new, q_new, gamma[2], p, device)
     
     w[:, :, :Nz-1] = w[:, :, :Nz-1] + (V10-V00)
     w[:, :, 1:] = w[:, :, 1:] + (V11-V10)
@@ -335,10 +205,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[:Nx-1, :, :]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_x, p, device)
-    V01 = cost2(p_old, q_new, gamma_x, p, device)
-    V10 = cost2(p_new, q_old, gamma_x, p, device)
-    V11 = cost2(p_new, q_new, gamma_x, p, device)
+    V00 = cost2(p_old, q_old, gamma[0], p, device)
+    V01 = cost2(p_old, q_new, gamma[0], p, device)
+    V10 = cost2(p_new, q_old, gamma[0], p, device)
+    V11 = cost2(p_new, q_new, gamma[0], p, device)
     
     w[1:, :, :] = w[1:, :, :] + (V10-V00)
     w[:Nx-1, :, :] = w[:Nx-1, :, :] + (V11-V10)
@@ -351,10 +221,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[:, :Ny-1, :]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_y, p, device)
-    V01 = cost2(p_old, q_new, gamma_y, p, device)
-    V10 = cost2(p_new, q_old, gamma_y, p, device)
-    V11 = cost2(p_new, q_new, gamma_y, p, device)
+    V00 = cost2(p_old, q_old, gamma[1], p, device)
+    V01 = cost2(p_old, q_new, gamma[1], p, device)
+    V10 = cost2(p_new, q_old, gamma[1], p, device)
+    V11 = cost2(p_new, q_new, gamma[1], p, device)
     
     w[:, 1:, :] = w[:, 1:, :] + (V10-V00)
     w[:, :Ny-1, :] = w[:, :Ny-1, :] + (V11-V10)
@@ -367,10 +237,10 @@ def get_capacities(u, g, mask, delta, alpha, p, device):
     q_old = u[:, :, :Nz-1]
     q_new = q_old + alpha
     
-    V00 = cost2(p_old, q_old, gamma_z, p, device)
-    V01 = cost2(p_old, q_new, gamma_z, p, device)
-    V10 = cost2(p_new, q_old, gamma_z, p, device)
-    V11 = cost2(p_new, q_new, gamma_z, p, device)
+    V00 = cost2(p_old, q_old, gamma[2], p, device)
+    V01 = cost2(p_old, q_new, gamma[2], p, device)
+    V10 = cost2(p_new, q_old, gamma[2], p, device)
+    V11 = cost2(p_new, q_new, gamma[2], p, device)
     
     w[:, :, 1:] = w[:, :, 1:] + (V10-V00)
     w[:, :, :Nz-1] = w[:, :, :Nz-1] + (V11-V10)
