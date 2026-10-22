@@ -70,6 +70,7 @@ coogar \
 
 We are actively working to make this software more general and user-friendly. Please reach out with any issues you encounter or advancements you would like to see. All updates to this repository will be posted and time stamped here. 
 
++ 10.22.2026: COOGAR version 1.1.0: Tutorial added, mask/no mask options separated
 + 09.23.2026: COOGAR version 1.0.0: 3D Phase Unwrapping Method
 
-Note that v1.0.0 is currently hard coded for 3D Phase Images. A future version will be coded for arbitrary nD volumes, and an update will be posted here once the version is available.
+Note that v1.1.0 is currently hard coded for 3D Phase Images. A future version will be coded for arbitrary nD volumes, and an update will be posted here once the version is available.
